@@ -18,11 +18,11 @@ def calc_err(target, measured_value):
 #     return (err2 - err1)/delta
 
 
-def outputcalc(kp, ki, kd, error, integral, diffntl):
-    error *= kp
-    integral *= ki
-    diffntl *= kd
-    return error + integral + diffntl
+# def outputcalc(kp, ki, kd, error, integral, diffntl):
+#     error *= kp
+#     integral *= ki
+#     diffntl *= kd
+#     return error + integral + diffntl
 
 
 class PID:
@@ -56,7 +56,7 @@ class PID:
         integral = 0.0
         # diffntl = differential(err1, err2, delta)
         diffntl = -err2/delta
-        output = outputcalc(kp, ki, kd, err1, integral, diffntl)
+        output = kp * err2 + integral + kd * diffntl
 
         # limit controller output to (-100.0, 100.0) for use as PWM duty cycle percentage
         if fabs(output) > 100.0:
@@ -80,6 +80,7 @@ class PID:
 
             if counter == 25 and run_once == 0:  # change setpoint after 25 'close' samples
                 setpoint += 5
+                ki += 0.01
                 run_once = 1
 
             # solve exponential function for t
@@ -88,10 +89,10 @@ class PID:
             lastmeasure = measurement
             measurement = measure(output, measurement, iroc)  # simulate temperature measurement
             err2 = calc_err(setpoint, measurement)
-            integral += err1*delta
+            integral += ki*err1*delta
             #diffntl = differential(err1, err2, delta)
             diffntl = -(measurement - lastmeasure)/delta
-            output = outputcalc(kp, ki, kd, err1, integral, diffntl)
+            output = kp * err2 + integral + kd * diffntl
             if fabs(output) > 100.0:
                 output = 100.0 * sign(output)
 
