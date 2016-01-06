@@ -14,8 +14,8 @@ def calc_err(target, measured_value):
     return target - measured_value
 
 
-def differential(err1, err2, delta):
-    return (err2 - err1)/delta
+# def differential(err1, err2, delta):
+#     return (err2 - err1)/delta
 
 
 def outputcalc(kp, ki, kd, error, integral, diffntl):
@@ -54,7 +54,8 @@ class PID:
         interval = 0.0
         err2 = calc_err(setpoint, measurement)
         integral = 0.0
-        diffntl = differential(err1, err2, delta)
+        # diffntl = differential(err1, err2, delta)
+        diffntl = -err2/delta
         output = outputcalc(kp, ki, kd, err1, integral, diffntl)
 
         # limit controller output to (-100.0, 100.0) for use as PWM duty cycle percentage
@@ -68,7 +69,7 @@ class PID:
                 pidwriter = csv.writer(csvfile, delimiter=',',
                                        quotechar='|', quoting=csv.QUOTE_MINIMAL)
                 pidwriter.writerow([interval, delta, setpoint, kp, ki, kd, measurement, err1, err2, integral, diffntl,
-                                output])
+                                    output])
         err1 = err2
         counter = 0
         timeout += time.time()
@@ -84,10 +85,12 @@ class PID:
             # solve exponential function for t
             t1 = -log1p(1.0 - (measurement/c) - 1.0) / k
             iroc = derivative(f, t1)  # calculate instantaneous rate of change at t
+            lastmeasure = measurement
             measurement = measure(output, measurement, iroc)  # simulate temperature measurement
             err2 = calc_err(setpoint, measurement)
             integral += err1*delta
-            diffntl = differential(err1, err2, delta)
+            #diffntl = differential(err1, err2, delta)
+            diffntl = -(measurement - lastmeasure)/delta
             output = outputcalc(kp, ki, kd, err1, integral, diffntl)
             if fabs(output) > 100.0:
                 output = 100.0 * sign(output)
@@ -95,9 +98,9 @@ class PID:
             if strtobool(csvwrite):
                 with open('pid.csv', 'a', encoding='utf8', newline='') as csvfile:
                     pidwriter = csv.writer(csvfile, delimiter=',',
-                                       quotechar='|', quoting=csv.QUOTE_MINIMAL)
-                    pidwriter.writerow([interval, delta, setpoint, kp, ki, kd, measurement, err1, err2, integral, diffntl,
-                                        output])
+                                           quotechar='|', quoting=csv.QUOTE_MINIMAL)
+                    pidwriter.writerow([interval, delta, setpoint, kp, ki, kd, measurement, err1, err2, integral,
+                                        diffntl, output])
             err1 = err2
             if round(measurement, 2) == round(setpoint, 2):
                 counter += 1
