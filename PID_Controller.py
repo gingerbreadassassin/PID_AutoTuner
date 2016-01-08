@@ -1,6 +1,9 @@
 """
 PID controller built from Wikipedia's pseudocode on PID Control and improved upon using Brett Beauregard's guide:
 http://brettbeauregard.com/blog/2011/04/improving-the-beginners-pid-introduction/
+
+CSV logging and a changing setpoint simulation may be toggled on when class PID is initialized, but default to off:
+    e.g. controller = PID('y') for csv logging only, ('n','y') for changing setpoint only, ('y', 'y') for both
 """
 
 from distutils.util import strtobool
