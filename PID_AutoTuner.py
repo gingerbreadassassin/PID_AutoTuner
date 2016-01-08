@@ -1,5 +1,5 @@
 """
-An attempt to build an automatic tuner for the PID Controller
+A WIP to build an automatic tuner for the PID Controller
 """
 
 from PID_Controller import PID
