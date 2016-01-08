@@ -1,113 +1,89 @@
+"""
+PID controller built from Wikipedia's pseudocode on PID Control and improved upon using Brett Beauregard's guide:
+http://brettbeauregard.com/blog/2011/04/improving-the-beginners-pid-introduction/
+"""
+
 from distutils.util import strtobool
 import time
-from math import fabs
-from numpy import sign, log1p
-from scipy.misc import derivative
-# import csv
-
-
-def measure(control, reading, iroc):  # will take reading from sensor later, simulates temperature fn
-    return reading + iroc + control*0.15
-
-
-def calc_err(target, measured_value):
-    return target - measured_value
-
-
-# def differential(err1, err2, delta):
-#     return (err2 - err1)/delta
-
-
-# def outputcalc(kp, ki, kd, error, integral, diffntl):
-#     error *= kp
-#     integral *= ki
-#     diffntl *= kd
-#     return error + integral + diffntl
+from temp_measure_simulator import VirtualSensor
+from PID_CSV_Writer import ControlWriter
 
 
 class PID:
-    @staticmethod
-    def control(setpoint, measurement, delta, kp, ki, kd, timeout, csvwrite):
-        if strtobool(csvwrite):
-            import csv
-            # open csv and write header row
-            with open('pid.csv', 'w', encoding='utf8', newline='') as csvfile:
-                pidwriter = csv.writer(csvfile, delimiter=',',
-                                       quotechar='|', quoting=csv.QUOTE_MINIMAL)
-                pidwriter.writerow(['Interval', 'Delta', 'Target', 'Kp',
-                                   'Ki', 'Kd', 'Measured',
-                                    'Error1', 'Error2',
-                                    'Integral', 'Differential', 'Output'])
+    def __init__(self, togglecsv=None, togglechangingsetpoint=None):
+        if togglechangingsetpoint is None:
+            self.changing = False
+        else:
+            self.changing = strtobool(togglechangingsetpoint)
+        if togglecsv is None:
+            self.csvwriting = False
+        else:
+            self.csvwriting = strtobool(togglecsv)
 
-        # set up variables for bounded exponential growth formula y=C(1-e^(-kt))
-        # note that t was arbitrarily chosen to equal 5.0 to calculate k
-        c = fabs(measurement - setpoint) * fabs(measurement - setpoint + 1.0) + 10.0
-        k = ((-1.0/5.0) * log1p((1.0-(measurement/c)-1.0)))
-        e = 2.718281828
+    def control(self, setpoint, measurement, deltat, kp, ki, kd, timeout):
 
-        # define bounded exponential growth formula
-        def f(x):
-            return c * (1-e**(-k*x))
+        # initialize the csv writer if desired
+        if self.csvwriting:
+            csvwriter = ControlWriter()
+
+        # setup sensor
+        sensor = VirtualSensor(setpoint, measurement)
 
         # initialize variables used in PID controller
-        err1 = 0
         interval = 0.0
-        err2 = calc_err(setpoint, measurement)
         integral = 0.0
-        # diffntl = differential(err1, err2, delta)
-        diffntl = -err2/delta
-        output = kp * err2 + integral + kd * diffntl
-
-        # limit controller output to (-100.0, 100.0) for use as PWM duty cycle percentage
-        if fabs(output) > 100.0:
-            output = 100.0 * sign(output)
-        round(output, 1)
-
-        if strtobool(csvwrite):
-            # write values to csv
-            with open('pid.csv', 'a', encoding='utf8', newline='') as csvfile:
-                pidwriter = csv.writer(csvfile, delimiter=',',
-                                       quotechar='|', quoting=csv.QUOTE_MINIMAL)
-                pidwriter.writerow([interval, delta, setpoint, kp, ki, kd, measurement, err1, err2, integral, diffntl,
-                                    output])
-        err1 = err2
+        output = 0.0
+        timeout += time.time()  # sets real-world time limit to kill an infinite loop
         counter = 0
-        timeout += time.time()
-        run_once = 0
+        countermax = 10
 
-        while counter < 100:
-            interval += delta  # increments of user's chosen delta T
+        # initializes counters if a simulated change to setpoint is desired
+        if self.changing:
+            countermax = 100
+            run_once = 0
 
-            if counter == 25 and run_once == 0:  # change setpoint after 25 'close' samples
-                setpoint += 5
-                ki += 0.01
-                run_once = 1
+        while counter < countermax:     # main loop
 
-            # solve exponential function for t
-            t1 = -log1p(1.0 - (measurement/c) - 1.0) / k
-            iroc = derivative(f, t1)  # calculate instantaneous rate of change at t
             lastmeasure = measurement
-            measurement = measure(output, measurement, iroc)  # simulate temperature measurement
-            err2 = calc_err(setpoint, measurement)
-            integral += ki*err1*delta
-            #diffntl = differential(err1, err2, delta)
-            diffntl = -(measurement - lastmeasure)/delta
-            output = kp * err2 + integral + kd * diffntl
-            if fabs(output) > 100.0:
-                output = 100.0 * sign(output)
+            measurement = sensor.gettemp(output, lastmeasure)
+            error = setpoint - measurement
+            integral += -ki*error*deltat
+            if integral > 100.0:
+                integral = 100.0
+            elif integral < 0.0:
+                integral = 0.0
+            differential = (lastmeasure - measurement)/deltat
+            output = kp * error + integral - kd * differential
+            
+            # Sanitize output for PWM duty cycle %
+            if output > 100.0:
+                output = 100.0
+            elif output < 0.0:
+                output = 0.0
 
-            if strtobool(csvwrite):
-                with open('pid.csv', 'a', encoding='utf8', newline='') as csvfile:
-                    pidwriter = csv.writer(csvfile, delimiter=',',
-                                           quotechar='|', quoting=csv.QUOTE_MINIMAL)
-                    pidwriter.writerow([interval, delta, setpoint, kp, ki, kd, measurement, err1, err2, integral,
-                                        diffntl, output])
-            err1 = err2
-            if round(measurement, 2) == round(setpoint, 2):
+            # if desired, write the current values to csv file
+            if self.csvwriting:
+                csvwriter.addrow(interval, deltat, setpoint, kp, ki, kd, measurement, error, integral, differential,
+                                 output)
+
+            interval += deltat  # increments of user's chosen delta T
+            if round(measurement, 1) == round(setpoint, 1):  # counts how many iterations measured temp matches target
                 counter += 1
+
+            # simulate changing the target temperature if desired
+            if self.changing:
+                if counter == 25 and run_once == 0:  # change setpoint after 25 low error samples
+                    setpoint += 10
+                    run_once += 1
+                if counter == 50 and run_once == 1:
+                    setpoint += 10
+                    run_once += 1
+                if counter == 75 and run_once == 2:
+                    setpoint -= 40
+                    run_once += 1
+
             if time.time() > timeout:
                 interval = 'INF'
                 break
 
-        # print("It took " + str(interval) + " seconds to stabilize.")
         return interval
